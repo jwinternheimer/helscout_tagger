@@ -122,5 +122,6 @@ How do we translate these back?
 ```{r}
 # turn into data frame
 predictions_df <- as.data.frame(predictions)
+
 ```
 

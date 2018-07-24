@@ -1,0 +1,124 @@
+---
+title: "Classifying Helpscout Messages"
+output: github_document
+---
+
+```{r warning = FALSE, message = FALSE}
+# load libraries
+library(keras)
+
+# source data.R file
+source('data.R')
+```
+
+Let's collect the data we need.
+
+```{r}
+# get raw data
+raw_messages <- get_messages()
+
+# clean data
+messages <- clean_data(raw_messages)
+
+# remove raw messages
+rm(raw_messages)
+```
+
+Now let's one-hot encode the words.
+
+```{r warning = FALSE, message = FALSE}
+# get the text of the messages
+text <- messages$text
+
+# set maximimum number of words to consider
+max_words <- 10000
+
+# create a tokenizer and only consider the top 10,000 words
+tokenizer <- text_tokenizer(num_words = max_words) %>%
+  fit_text_tokenizer(text) 
+
+# turn strings into lists of integer indeces
+sequences <- texts_to_sequences(tokenizer, text)
+
+# one-hot encode the text
+one_hot_results <- texts_to_matrix(tokenizer, text, mode = "binary")
+
+# this is how we can recover the word index
+word_index <- tokenizer$word_index
+```
+
+For now we'll define labels as whether the message's label is "billing".
+
+```{r}
+# define billing labels
+messages <- messages %>% 
+  mutate(label = ifelse(custom_field_label == 'billing', 1, 
+                        ifelse(is.na(custom_field_label), 0, 0)))
+
+# create labels
+labels = as.numeric(as.array(messages$label))
+```
+
+We need to split the data into training and testing sets.
+
+```{r}
+# split data into training and testing sets
+indices <- sample(1:nrow(messages))
+
+# define number of training samples
+training_samples = round(nrow(messages) * 0.7, 0)
+validation_samples = nrow(messages) - training_samples
+
+# set training and testing indeces
+training_indices <- indices[1:training_samples]
+validation_indices <- indices[(training_samples + 1): (training_samples + validation_samples)]
+
+# create training and testing sets
+x_train <- one_hot_results[training_indices,]
+y_train <- labels[training_indices]
+
+x_val <- one_hot_results[validation_indices,]
+y_val <- labels[validation_indices]
+```
+
+Ok, let's build the model.
+
+```{r}
+# build model
+model <- keras_model_sequential() %>%
+  layer_dense(units = 16, kernel_regularizer = regularizer_l2(0.001),
+              activation = "relu", input_shape = c(10000)) %>%
+  layer_dropout(rate = 0.4) %>% 
+  layer_dense(units = 16, kernel_regularizer = regularizer_l2(0.001), 
+              activation = "relu") %>%
+  layer_dropout(rate = 0.3) %>% 
+  layer_dense(units = 1, activation = "sigmoid")
+
+# compile the model
+model %>% compile(
+  optimizer = "rmsprop",
+  loss = "binary_crossentropy",
+  metrics = c("accuracy")
+)
+```
+
+Time to train the model.
+
+```{r}
+# run the model
+history <- model %>% fit(
+  x_train,
+  y_train,
+  epochs = 20,
+  batch_size = 512,
+  validation_data = list(x_val, y_val)
+)
+```
+
+Plot the model results.
+
+```{r}
+plot(history)
+```
+
+This is pretty good! The model starts to overfit after around eight epochs.

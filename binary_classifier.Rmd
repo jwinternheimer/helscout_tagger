@@ -13,14 +13,24 @@ source('data.R')
 
 Let's collect the data we need.
 
-```{r}
+```{r eval = FALSE}
 # get raw data
-raw_messages <- get_messages()
+# raw_messages <- get_messages()
+```
 
+```{r include = FALSE}
+# save raw messages
+# saveRDS(raw_messages, file = "raw_hs_messages.rds")
+
+# load raw messages
+raw_messages <- readRDS("raw_hs_messages.rds")
+```
+
+```{r}
 # clean data
 messages <- clean_data(raw_messages)
 
-# remove raw messages
+# remove raw messages dataframe
 rm(raw_messages)
 ```
 
@@ -121,4 +131,41 @@ Plot the model results.
 plot(history)
 ```
 
-This is pretty good! The model starts to overfit after around eight epochs.
+This is pretty good! The model starts to overfit after around ten epochs.
+
+### Word Embedding
+Let's try this technique out.
+
+```{r}
+# number of words to consider as features
+max_features <- 10000
+
+# cut off text after 100 words
+maxlen <- 100
+
+# turnlists of integers into a 2D integer tensor of shape (samples, maxlen)
+x_train <- pad_sequences(x_train, maxlen = maxlen)
+x_val <- pad_sequences(x_val, maxlen = maxlen)
+
+# build model
+model <- keras_model_sequential() %>%
+  layer_embedding(input_dim = 10000, output_dim = 8, input_length = maxlen) %>%
+  layer_flatten() %>% 
+  layer_dense(units = 1, activation = "sigmoid")
+
+model %>% compile(
+  optimizer = "rmsprop",
+  loss = "binary_crossentropy",
+  metrics = c("acc")
+)
+
+# run model
+history <- model %>% fit(
+  x_train, y_train,
+  epochs = 10,
+  batch_size = 32,
+  validation_data = list(x_val, y_val)
+)
+```
+
+It didn't do so well, and there's a lot of variance in the data.

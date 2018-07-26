@@ -53,6 +53,7 @@ clean_data <- function(df) {
   
   # set rank as integer
   df$message_rank <- as.integer(df$message_rank)
+  df$custom_field_rank <- as.integer(df$custom_field_rank)
   
   # look only at area tags for now
   df <- filter(df, custom_field_type == 'AREA')
@@ -61,7 +62,7 @@ clean_data <- function(df) {
   df <- filter(df, message_rank == 1)
   
   # only include first custom field label for now
-  df <- filter(df, custom_field_rank == 1)
+  # df <- filter(df, custom_field_rank == 1)
   
   # get full name
   df$full_name <- paste(df$created_by_first_name, df$created_by_last_name)
@@ -72,17 +73,33 @@ clean_data <- function(df) {
   # merge feature requests
   df$custom_field_label <- gsub("feature requests", "feature request", df$custom_field_label)
   
+  # merge composing tags
+  df$custom_field_label <- gsub("composition", "composing", df$custom_field_label)
+  
+  # merge org tags
+  df$custom_field_label <- gsub("org-setup", "org-maintenance", df$custom_field_label)
+  
+  # merge Instagram tags
+  df$custom_field_label[df$custom_field_label == "Instagram (BUG)"] <- "Instagram"
+  df$custom_field_label[df$custom_field_label == "Instagram (FEEDBACK)"] <- "Instagram"
+  
   # filter out certain labels
   df <- df %>% 
-    filter(custom_field_label != "success" & custom_field_label != "extension - multiple composer")
+    filter(custom_field_label != "success" & 
+             custom_field_label != "extension - multiple composer")
   
   # remove emails from bufferbot
-  df <- filter(df, full_name != "Updates Buffer")
+  df <- filter(df, full_name != "Updates Buffer" & full_name != "Stephanie Lee")
   
   # remove html df and line breaks from body
   df <- df %>% 
-    mutate(text = gsub("<.*?>", "", body),
-           text = gsub("\\n", " ", text))
+    mutate(text = gsub("<.*?>", " ", body),
+           text = gsub("\\n", " ", text),
+           text = str_squish(text),
+           text = trimws(text)) %>% 
+    filter(text != "" & !is.na(text) &
+             subject != "For Church Affiliate") %>% 
+    filter(!grepl("Body Translation Powered", text))
   
   # return dataframe
   df

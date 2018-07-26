@@ -1,0 +1,84 @@
+---
+title: "Helpscout TagR"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    theme: paper
+    social: menu
+    source_code: embed
+runtime: shiny
+---
+
+```{r global, include = FALSE}
+# load data in 'global' chunk so it can be shared by all users of the dashboard
+library(keras)
+library(dplyr)
+library(tidyr)
+library(scales)
+
+# load model object
+model <- load_model_hdf5('tagger.h5')
+
+# load tokenizer
+tokenizer <- load_text_tokenizer('helpscout_tokenizer')
+
+# explicitly name labels
+label_names <- c('analytics', 'API', 'billing', 'composing', 'extension', 
+                 'feature request', 'Instagram', 'onboarding','org-maintenance',
+                 'posting', 'profile-connection','profile-maintenance', 
+                 'reply-support', 'scheduling', 'social media advice',
+                 'uncategorized', 'user-authorization', 'user-maintenance')
+
+
+# function to get top 3 predictions for a string
+make_prediction <- function(new_text) {
+  
+  # one-hot encode the text
+  one_hot <- texts_to_matrix(tokenizer, as.array(new_text), mode = "binary")
+  
+  # make predictions on new data
+  new_predictions <- model %>% predict(one_hot) %>% as_data_frame()
+  
+  # name the columns
+  names(new_predictions) <- label_names
+  
+  # add the text
+  new_predictions$text <- new_text
+
+  # gather labels
+  new_predictions %>% 
+    gather(key = "label", value = "prob", label_names) %>% 
+    filter(label != 'uncategorized') %>% 
+    group_by(text) %>% 
+    top_n(3, prob) %>% 
+    arrange(text, desc(prob)) %>% 
+    mutate(prob = scales::percent(prob)) %>% 
+    ungroup() %>% 
+    select(-text)
+}
+```
+
+Row {data-height=100}
+-----------------------------------------------------------------------
+
+### Text Input
+
+```{r}
+textInput("sample_text", "Enter a message that Buffer would receive in Helpscout or Twitter", 
+          value = "My Instagram profile keeps disconnecting and it's frustrating to deal with.", 
+          width = "80%", placeholder = NULL)
+```
+
+
+Row
+-----------------------------------------------------------------------
+
+### Recommended AREA tags
+```{r}
+renderTable({
+  
+  make_prediction(new_text = input$sample_text)
+  
+})
+```
+

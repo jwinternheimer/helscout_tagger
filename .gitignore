@@ -3,3 +3,6 @@
 .RData
 .Ruserdata
 .Renviron
+tagger.h5
+*.rds
+helpscout_tokenizer

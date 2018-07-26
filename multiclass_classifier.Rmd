@@ -6,6 +6,9 @@ output: github_document
 ```{r warning = FALSE, message = FALSE}
 # load libraries
 library(keras)
+library(openssl)
+library(tidyr)
+library(scales)
 
 # source data.R file
 source('data.R')
@@ -13,29 +16,40 @@ source('data.R')
 
 Let's collect the data we need.
 
-```{r}
+```{r eval = FALSE}
 # get raw data
 raw_messages <- get_messages()
 
 # clean data
 messages <- clean_data(raw_messages)
+```
 
-# remove raw messages
-rm(raw_messages)
+```{r include = FALSE}
+# save clean messages
+# saveRDS(messages, file = "clean_hs_messages.rds")
+
+# load messages
+messages <- readRDS("clean_hs_messages.rds")
 ```
 
 Now let's one-hot encode the words.
 
 ```{r warning = FALSE, message = FALSE}
+# add subject to text
+messages$text <- paste(messages$text, messages$mailbox_name, messages$subject, messages$preview)
+
 # get the text of the messages
 text <- messages$text
 
 # set maximimum number of words to consider
 max_words <- 10000
 
-# create a tokenizer and only consider the top 10,000 words
+# create a tokenizer and only consider the top 1000 words
 tokenizer <- text_tokenizer(num_words = max_words) %>%
   fit_text_tokenizer(text) 
+
+# save tokenizer
+save_text_tokenizer(tokenizer, "helpscout_tokenizer")
 
 # turn strings into lists of integer indeces
 sequences <- texts_to_sequences(tokenizer, text)
@@ -86,7 +100,7 @@ Time to build the model.
 
 ```{r}
 model <- keras_model_sequential() %>% 
-  layer_dense(units = 32, activation = "relu", input_shape = c(10000)) %>% 
+  layer_dense(units = 32, activation = "relu", input_shape = c(max_words)) %>% 
   layer_dropout(rate = 0.3) %>% 
   layer_dense(units = 32, activation = "relu") %>% 
   layer_dropout(rate = 0.2) %>% 
@@ -110,6 +124,13 @@ history <- model %>% fit(
 )
 ```
 
+Cool. Let's save the model.
+
+```{r}
+# save the entire model object
+save_model_hdf5(model, 'tagger.h5')
+```
+
 Generate predictions for the testing set.
 
 ```{r}
@@ -123,5 +144,134 @@ How do we translate these back?
 # turn into data frame
 predictions_df <- as.data.frame(predictions)
 
+# name the columns
+names(predictions_df) <- levels(as.factor(messages$custom_field_label))
+
+# add the text
+predictions_df$text <- text[validation_indices]
+
+# give it an id
+predictions_df <- predictions_df %>% 
+  mutate(id = md5(text))
 ```
+
+For each text, let's try to display the top three recommended labels
+
+```{r}
+# get label names
+label_names <- levels(as.factor(messages$custom_field_label))
+
+# gather labels
+label_probs <- predictions_df %>% 
+  gather(key = "label", value = "prob", label_names)
+
+# get top 3 label recommendations
+top_3 <- label_probs %>% 
+  group_by(text) %>% 
+  top_n(3, prob) %>% 
+  arrange(id, desc(prob))
+
+top_3
+```
+
+Now let's try to automatically encode new text input and make a prediction from it.
+
+```{r}
+# sample new text
+sample_text <- c("I was mistakenly charged $99 for a Business plan when I wanted the $10 Awesome plan.",
+                 "My profile keeps getting disconnected and it is quite frustrating.",
+                 "How do I schedule posts directly to Instagram without having to open the app on my phone?",
+                 "I want to apply a nonprofit discount.")
+
+# function to get top 3 predictions for a string
+make_prediction <- function(new_text) {
+  
+  # one-hot encode the text
+  one_hot <- texts_to_matrix(tokenizer, as.array(new_text), mode = "binary")
+  
+  # make predictions on new data
+  new_predictions <- model %>% predict(one_hot) %>% as_data_frame()
+  
+  # get label names
+  label_names <- levels(as.factor(messages$custom_field_label))
+  
+  # name the columns
+  names(new_predictions) <- label_names
+  
+  # add the text
+  new_predictions$text <- new_text
+
+  # gather labels
+  new_predictions %>% 
+    gather(key = "label", value = "prob", label_names) %>% 
+    filter(label != 'uncategorized') %>% 
+    group_by(text) %>% 
+    top_n(3, prob) %>% 
+    arrange(text, desc(prob))
+}
+
+make_prediction(sample_text)
+```
+
+Cool. Let's save the model.
+
+### LSTM
+
+```{r}
+# maximum number of words to consider
+max_features <- 5000
+
+# cut message off after 200 words
+maxlen <- 200
+
+# turn strings into lists of integer indeces
+sequences <- texts_to_sequences(tokenizer, text)
+
+# split data into training and testing sets
+indices <- sample(1:length(sequences))
+
+# define number of training samples
+training_samples = round(length(sequences) * 0.7, 0)
+validation_samples = length(sequences) - training_samples
+
+# set training and testing indeces
+training_indices <- indices[1:training_samples]
+validation_indices <- indices[(training_samples + 1): (training_samples + validation_samples)]
+
+# create training and testing sets
+x_train <- sequences[training_indices]
+y_train <- label_matrix[training_indices,]
+
+x_test <- sequences[validation_indices]
+y_test <- label_matrix[validation_indices,]
+
+# pad the sequences of words
+x_train <- pad_sequences(x_train, maxlen = maxlen)
+x_test <- pad_sequences(x_test, maxlen = maxlen)
+
+padded_sequences <- pad_sequences(sequences, maxlen)
+```
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_embedding(input_dim = max_features, output_dim = 128, input_length = maxlen) %>%
+  layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2) %>% 
+  layer_dense(units = 21) %>% 
+  layer_activation("softmax")
+
+model %>% compile(
+  optimizer = "rmsprop",
+  loss = "categorical_crossentropy",
+  metrics = c("accuracy")
+)
+
+history <- model %>% fit(
+  padded_sequences, label_matrix,
+  epochs = 20,
+  batch_size = 256,
+  verbose = 1,
+  validation_split = 0.3
+)
+```
+
 
